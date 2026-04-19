@@ -79,6 +79,7 @@ CVAR_DEFINE_AUTO( cl_trace_stufftext, "0", 0, "enable stufftext (server-to-clien
 CVAR_DEFINE_AUTO( cl_trace_messages, "0", FCVAR_CHEAT, "enable message names tracing (good for developers)" );
 CVAR_DEFINE_AUTO( cl_trace_events, "0", FCVAR_CHEAT, "enable events tracing (good for developers)" );
 static CVAR_DEFINE_AUTO( cl_nat, "0", 0, "show servers running under NAT" );
+static CVAR_DEFINE_AUTO( cl_filtersteam, "0", FCVAR_ARCHIVE, "hide Steam broker servers in server browser" );
 CVAR_DEFINE_AUTO( hud_utf8, "0", FCVAR_ARCHIVE, "Use utf-8 encoding for hud text" );
 CVAR_DEFINE_AUTO( ui_renderworld, "0", FCVAR_ARCHIVE, "render world when UI is visible" );
 static CVAR_DEFINE_AUTO( cl_maxframetime, "0", 0, "set deadline timer for client rendering to catch freezes" );
@@ -102,6 +103,38 @@ static CVAR_DEFINE_AUTO( cl_autorecord, "0", 0, "automatically start recording a
 client_t		cl;
 client_static_t	cls;
 clgame_static_t	clgame;
+
+static netadr_t cl_steam_broker_servers[4096];
+static size_t cl_steam_broker_servers_count;
+
+static void CL_ClearSteamBrokerServers( void )
+{
+	cl_steam_broker_servers_count = 0;
+}
+
+static qboolean CL_IsSteamBrokerServer( netadr_t adr )
+{
+	size_t i;
+
+	for( i = 0; i < cl_steam_broker_servers_count; i++ )
+	{
+		if( NET_CompareAdr( adr, cl_steam_broker_servers[i] ))
+			return true;
+	}
+
+	return false;
+}
+
+static void CL_AddSteamBrokerServer( netadr_t adr )
+{
+	if( CL_IsSteamBrokerServer( adr ))
+		return;
+
+	if( cl_steam_broker_servers_count >= ARRAYSIZE( cl_steam_broker_servers ))
+		return;
+
+	cl_steam_broker_servers[cl_steam_broker_servers_count++] = adr;
+}
 
 //======================================================================
 int GAME_EXPORT CL_Active( void )
@@ -1811,6 +1844,7 @@ static void CL_InternetServers_f( void )
 	cls.internetservers_nat = cl_nat.value != 0.0f;
 	cls.internetservers_pending = true;
 	cls.internetservers_key = COM_RandomLong( 0, 0xFFFFFFFF );
+	CL_ClearSteamBrokerServers();
 	Q_strncpy( cls.internetservers_customfilter, Cmd_Argv( 1 ), sizeof( cls.internetservers_customfilter ));
 
 	cls.internetservers_wait = NET_MasterQuery(
@@ -2013,6 +2047,7 @@ static void CL_ParseStatusMessage( netadr_t from, sizebuf_t *msg )
 {
 	static char	infostring[512+8];
 	char		*s = MSG_ReadString( msg );
+	qboolean	is_steam_server = CL_IsSteamBrokerServer( from );
 	int numcl, maxcl, i;
 
 	if( !Info_IsValid( s ))
@@ -2041,6 +2076,13 @@ static void CL_ParseStatusMessage( netadr_t from, sizebuf_t *msg )
 	if( maxcl > MAX_CLIENTS || numcl > MAX_CLIENTS || numcl > maxcl || i != PROTOCOL_VERSION )
 		return;
 
+	if( is_steam_server )
+	{
+		Info_SetValueForKey( infostring, "steam", "1", sizeof( infostring ));
+		if( cl_filtersteam.value != 0.0f )
+			return;
+	}
+
 	UI_AddServerToList( from, infostring );
 }
 
@@ -2048,6 +2090,7 @@ static void CL_ParseGoldSrcStatusMessage( netadr_t from, sizebuf_t *msg )
 {
 	static char	s[512+8];
 	int p, numcl, maxcl, password, remaining, bots;
+	qboolean is_steam_server = CL_IsSteamBrokerServer( from );
 	string host, map, gamedir, version;
 	char *replace;
 
@@ -2089,6 +2132,12 @@ static void CL_ParseGoldSrcStatusMessage( netadr_t from, sizebuf_t *msg )
 	Info_SetValueForKeyf( s, "maxcl", sizeof( s ), "%i", maxcl );
 	Info_SetValueForKey( s, "gamedir", gamedir, sizeof( s ));
 	Info_SetValueForKey( s, "password", password ? "1" : "0", sizeof( s ));
+	if( is_steam_server )
+	{
+		Info_SetValueForKey( s, "steam", "1", sizeof( s ));
+		if( cl_filtersteam.value != 0.0f )
+			return;
+	}
 
 	// write host last so we can try to cut off too long hostnames
 	// TODO: value size limit for infostrings
@@ -2558,6 +2607,9 @@ static void CL_ServerList( netadr_t from, sizebuf_t *msg )
 		// list is ends here
 		if( !servadr.port )
 			break;
+
+		if( steam_broker_reply )
+			CL_AddSteamBrokerServer( servadr );
 
 		NET_Config( true, false ); // allow remote
 		CL_QueryServer( servadr, proto );
