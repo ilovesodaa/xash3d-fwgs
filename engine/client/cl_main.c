@@ -1818,6 +1818,7 @@ static void CL_InternetServers_f( void )
 		cls.internetservers_nat,
 		cls.internetservers_customfilter
 	);
+	SteamBroker_QueryInternetServers( cls.internetservers_key, cls.internetservers_customfilter );
 }
 
 static void CL_QueryServer( netadr_t adr, connprotocol_t proto )
@@ -2497,15 +2498,24 @@ static void CL_Reject( const char *c, const char *args, netadr_t from )
 static void CL_ServerList( netadr_t from, sizebuf_t *msg )
 {
 	connprotocol_t proto;
+	qboolean steam_broker_reply = false;
 
 	if( !NET_IsMasterAdr( from, &proto ))
 	{
-		Con_Printf( S_WARN "unexpected server list packet from %s\n", NET_AdrToString( from ));
-		return;
+		if( SteamBroker_IsFromBroker( from ))
+		{
+			proto = PROTO_GOLDSRC;
+			steam_broker_reply = true;
+		}
+		else
+		{
+			Con_Printf( S_WARN "unexpected server list packet from %s\n", NET_AdrToString( from ));
+			return;
+		}
 	}
 
 	// check the extra header
-	if( proto == PROTO_CURRENT )
+	if( proto == PROTO_CURRENT || steam_broker_reply )
 	{
 		if( MSG_ReadByte( msg ) == 0x7f )
 		{
