@@ -44,12 +44,17 @@ static struct
 
 static qboolean SteamBroker_UpdateBrokerAddress( void )
 {
-	if( NET_NetadrType( &broker.adr ) == NA_UNDEFINED )
+	if( !broker.addr_initialized )
 	{
 		if( !NET_StringToAdr( cl_steam_broker_addr.string, &broker.adr ))
 			return false;
 	}
 	return true;
+}
+
+qboolean SteamBroker_IsFromBroker( netadr_t from )
+{
+	return NET_CompareAdr( from, broker.adr );
 }
 
 qboolean SteamBroker_InitiateGameConnection( netadr_t serveradr, int challenge )
@@ -84,6 +89,27 @@ void SteamBroker_TerminateGameConnection( void )
 	int len = Q_snprintf( buf, sizeof( buf ), "sb_disconnect %s %d", NET_AdrToString( cls.serveradr ), broker.challenge );
 
 	NET_SendPacket( NS_CLIENT, len, buf, broker.adr );
+}
+
+qboolean SteamBroker_QueryInternetServers( uint32_t key, const char *filter )
+{
+	char buf[512];
+	int len;
+
+	(void)filter;
+
+	if( Q_stricmp( cl_ticket_generator.string, "steam" ) != 0 )
+		return false;
+
+	SteamBroker_Frame();
+
+	if( !broker.announced || !broker.addr_initialized )
+		return false;
+
+	len = Q_snprintf( buf, sizeof( buf ), "sb_servers %u", key );
+	NET_SendPacket( NS_CLIENT, len, buf, broker.adr );
+
+	return true;
 }
 
 void SteamBroker_AnnounceGameStart( const char *gamedir )
@@ -127,6 +153,7 @@ void SteamBroker_Frame( void )
 	if( restart )
 	{
 		broker.announced = false;
+		broker.addr_initialized = false;
 		ClearBits( cl_ticket_generator.flags, FCVAR_CHANGED );
 		ClearBits( cl_steam_broker_addr.flags, FCVAR_CHANGED );
 	}
@@ -137,17 +164,19 @@ void SteamBroker_Frame( void )
 		if( !SteamBroker_UpdateBrokerAddress( ))
 		{ 
 			Con_Printf( "%s: failed to resolve broker address \"%s\"\n", __func__, cl_steam_broker_addr.string );
+			return;
 		}
 		else
 		{
+			broker.addr_initialized = true;
 			if( restart )
 			{
 				// terminate old steam broker if instance address has changed
 				SteamBroker_AnnounceGameShutdown( previous_addr ); 
 			}
 			SteamBroker_AnnounceGameStart( GI->gamefolder );
+			broker.announced = true;
 		}
-		broker.announced = true;
 	}
 }
 

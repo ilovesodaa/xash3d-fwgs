@@ -1210,6 +1210,8 @@ void SteamBroker_Frame( void );
 void SteamBroker_HandlePacket( netadr_t from, sizebuf_t *msg );
 int SteamBroker_InitiateGameConnection( netadr_t serveradr, int challenge );
 void SteamBroker_TerminateGameConnection( void );
+qboolean SteamBroker_QueryInternetServers( uint32_t key, const char *filter );
+qboolean SteamBroker_IsFromBroker( netadr_t from );
 
 //
 // cl_video.c
