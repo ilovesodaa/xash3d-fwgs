@@ -103,6 +103,8 @@ client_t		cl;
 client_static_t	cls;
 clgame_static_t	clgame;
 
+static void CL_QueryServer( netadr_t adr, connprotocol_t proto );
+
 //======================================================================
 int GAME_EXPORT CL_Active( void )
 {
@@ -1818,6 +1820,12 @@ static void CL_InternetServers_f( void )
 		cls.internetservers_nat,
 		cls.internetservers_customfilter
 	);
+
+	SteamBroker_QueryInternetServers(
+		cls.internetservers_key,
+		cls.internetservers_nat,
+		cls.internetservers_customfilter
+	);
 }
 
 static void CL_QueryServer( netadr_t adr, connprotocol_t proto )
@@ -2560,6 +2568,54 @@ static void CL_ServerList( netadr_t from, sizebuf_t *msg )
 	}
 }
 
+static void CL_ServerListFromSteamBroker( netadr_t from, sizebuf_t *msg )
+{
+	uint32_t key;
+
+	if( !SteamBroker_IsFromBroker( from ))
+	{
+		Con_Printf( S_WARN "unexpected steam server list packet from %s\n", NET_AdrToString( from ));
+		return;
+	}
+
+	if( MSG_GetNumBitsLeft( msg ) < 32 )
+	{
+		Con_Printf( S_WARN "truncated steam server list packet from %s\n", NET_AdrToString( from ));
+		return;
+	}
+
+	key = MSG_ReadDword( msg );
+
+	if( cls.internetservers_key != key )
+	{
+		Con_Printf( S_WARN "unexpected steam server list packet from %s (invalid key)\n", NET_AdrToString( from ));
+		return;
+	}
+
+	// server list got from steam broker
+	while( MSG_GetNumBitsLeft( msg ) > 8 )
+	{
+		netadr_t servadr = { 0 };
+
+		MSG_ReadBytes( msg, servadr.ip, sizeof( servadr.ip )); // 4 bytes for IP
+		NET_NetadrSetType( &servadr, NA_IP );
+		servadr.port = MSG_ReadShort( msg ); // 2 bytes for Port
+
+		// list ends here
+		if( !servadr.port )
+			break;
+
+		NET_Config( true, false ); // allow remote
+		CL_QueryServer( servadr, PROTO_GOLDSRC );
+	}
+
+	if( cls.internetservers_pending )
+	{
+		UI_ResetPing();
+		cls.internetservers_pending = false;
+	}
+}
+
 /*
 =================
 CL_ConnectionlessPacket
@@ -2588,7 +2644,11 @@ static void CL_ConnectionlessPacket( netadr_t from, sizebuf_t *msg )
 	{
 		SteamBroker_HandlePacket( from, msg );
 	}
-	if( !Q_strcmp( c, S2C_GOLDSRC_CONNECTION ) || !Q_strcmp( c, S2C_CONNECTION ))
+	else if( !Q_strcmp( c, "sb_serverlist" ))
+	{
+		CL_ServerListFromSteamBroker( from, msg );
+	}
+	else if( !Q_strcmp( c, S2C_GOLDSRC_CONNECTION ) || !Q_strcmp( c, S2C_CONNECTION ))
 	{
 		CL_ClientConnect( cls.legacymode, c, from );
 	}

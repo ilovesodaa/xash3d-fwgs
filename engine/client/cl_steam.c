@@ -52,6 +52,11 @@ static qboolean SteamBroker_UpdateBrokerAddress( void )
 	return true;
 }
 
+qboolean SteamBroker_IsFromBroker( netadr_t from )
+{
+	return NET_CompareAdr( from, broker.adr );
+}
+
 qboolean SteamBroker_InitiateGameConnection( netadr_t serveradr, int challenge )
 {
 	// only ipv4 supported
@@ -84,6 +89,28 @@ void SteamBroker_TerminateGameConnection( void )
 	int len = Q_snprintf( buf, sizeof( buf ), "sb_disconnect %s %d", NET_AdrToString( cls.serveradr ), broker.challenge );
 
 	NET_SendPacket( NS_CLIENT, len, buf, broker.adr );
+}
+
+qboolean SteamBroker_QueryInternetServers( uint32_t key, qboolean nat, const char *filter )
+{
+	char buf[1024];
+	int len;
+
+	if( Q_stricmp( cl_ticket_generator.string, "steam" ) != 0 )
+		return false;
+
+	if( !SteamBroker_UpdateBrokerAddress( ))
+		return false;
+
+	NET_Config( true, true ); // initialize sockets to be able to send packets to broker
+
+	if( COM_CheckString( filter ))
+		len = Q_snprintf( buf, sizeof( buf ), "sb_internetservers %08x %s %s", key, nat ? "1" : "0", filter );
+	else
+		len = Q_snprintf( buf, sizeof( buf ), "sb_internetservers %08x %s", key, nat ? "1" : "0" );
+
+	NET_SendPacket( NS_CLIENT, len, buf, broker.adr );
+	return true;
 }
 
 void SteamBroker_AnnounceGameStart( const char *gamedir )
@@ -159,7 +186,7 @@ void SteamBroker_HandlePacket( netadr_t from, sizebuf_t *msg )
 	uint32_t len;
 	uint8_t ticket[2048]; // 2048 bytes according to SDK docs
 
-	if( !NET_CompareAdr( from, broker.adr ))
+	if( !SteamBroker_IsFromBroker( from ))
 		return;
 
 	challenge = MSG_ReadLong( msg );
